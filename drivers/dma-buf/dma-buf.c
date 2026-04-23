@@ -86,11 +86,14 @@ static void dma_buf_release(struct dentry *dentry)
 	BUG_ON(dmabuf->cb_shared.active || dmabuf->cb_excl.active);
 
 	dmabuf->ops->release(dmabuf);
+	
+	dmabuf_trace_free(dmabuf);
 
 	if (dmabuf->resv == (struct reservation_object *)&dmabuf[1])
 		reservation_object_fini(dmabuf->resv);
 
 	module_put(dmabuf->owner);
+	kfree(dmabuf->exp_name);
 	kfree(dmabuf->name);
 	kfree(dmabuf);
 }
