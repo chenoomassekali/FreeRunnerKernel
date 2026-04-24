@@ -89,8 +89,6 @@ static void dma_buf_release(struct dentry *dentry)
 	
 	dmabuf_trace_free(dmabuf);
 
-	dmabuf_trace_free(dmabuf);
-
 	if (dmabuf->resv == (struct reservation_object *)&dmabuf[1])
 		reservation_object_fini(dmabuf->resv);
 
