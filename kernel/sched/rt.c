@@ -2612,7 +2612,6 @@ unsigned long frt_cpu_util_wake(int cpu, struct task_struct *p)
 {
 	struct cfs_rq *cfs_rq;
 	struct rt_rq *rt_rq;
-	struct rq *rq;
 	unsigned int util;
 
 	cfs_rq = &cpu_rq(cpu)->cfs;
