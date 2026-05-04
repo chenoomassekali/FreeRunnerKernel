@@ -432,6 +432,9 @@ skip_betting:
 static void sugov_get_util(unsigned long *util, unsigned long *max, int cpu)
 {
 	unsigned long max_cap;
+#ifdef CONFIG_UCLAMP_TASK
+	struct rq *rq = cpu_rq(cpu);
+#endif
 
 	max_cap = arch_scale_cpu_capacity(NULL, cpu);
 
@@ -447,6 +450,9 @@ static void sugov_get_util(unsigned long *util, unsigned long *max, int cpu)
 	part_cpu_active_ratio(util, max, cpu);
 #endif
 
+#ifdef CONFIG_UCLAMP_TASK
+   	*util = uclamp_util_with(rq, *util, NULL);
+#endif	
 }
 
 #ifdef CONFIG_SCHED_KAIR_GLUE
@@ -550,6 +556,11 @@ static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
 
 		j_util = j_sg_cpu->util;
 		j_max = j_sg_cpu->max;
+
+#ifdef CONFIG_UCLAMP_TASK
+		j_util = uclamp_util_with(cpu_rq(j), j_util, NULL);
+#endif
+
 		if (j_util * max > j_max * util) {
 			util = j_util;
 			max = j_max;
