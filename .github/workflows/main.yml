@@ -11,16 +11,25 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Dependencies and Toolchain
+      - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget git clang lld llvm
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget git clang lld llvm device-tree-compiler
           clang --version
 
       - name: Download Nethunter boot.img
         run: |
           wget -q https://github.com/chenoomassekali/android_kernel_Samsung_Exynos9825_d2s/releases/download/v2.0/boot-current.img -O nethunter-boot.img
           ls -lh nethunter-boot.img
+
+      - name: Fix DTC and Scripts Build Error
+        run: |
+          # Fix Werror di scripts/dtc
+          sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
+          sed -i 's/HOSTCFLAGS := -Wall -Wstrict-prototypes/HOSTCFLAGS := -Wall -Wno-error/g' scripts/Makefile 2>/dev/null || true
+          sed -i 's/KBUILD_HOSTCFLAGS.*-Werror.*$/KBUILD_HOSTCFLAGS += -Wno-error/g' Makefile 2>/dev/null || true
+          # Tampilkan baris 675-685 untuk debug
+          sed -n '675,685p' Makefile || true
 
       - name: Add RT2800 Config
         run: |
@@ -47,6 +56,7 @@ jobs:
           export OBJCOPY=llvm-objcopy
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
+          export DTC=$(which dtc)
           rm -rf out
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
@@ -54,7 +64,7 @@ jobs:
           scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           make O=out olddefconfig
-          make O=out -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
+          make O=out DTC=$DTC -j$(nproc) HOSTCFLAGS="-Wno-error" KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out -name "Image.gz" | head -1)
