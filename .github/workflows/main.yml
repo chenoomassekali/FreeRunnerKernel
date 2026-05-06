@@ -35,8 +35,8 @@ jobs:
             2>/dev/null || true
           python3 << 'PYEOF'
           import os, glob, re
-          files = glob.glob('include/linux/compiler*.h')
-          for fpath in files:
+          # Fix __has_attribute
+          for fpath in glob.glob('include/linux/compiler*.h'):
               try:
                   with open(fpath, 'r') as f:
                       content = f.read()
@@ -48,6 +48,17 @@ jobs:
                       print(f"Fixed: {fpath}")
               except Exception as e:
                   print(f"Skip {fpath}: {e}")
+          # Fix duplicate static di tcp_ipv6.c
+          try:
+              with open('net/ipv6/tcp_ipv6.c', 'r') as f:
+                  content = f.read()
+              fixed = re.sub(r'\bstatic\s+static\b', 'static', content)
+              if fixed != content:
+                  with open('net/ipv6/tcp_ipv6.c', 'w') as f:
+                      f.write(fixed)
+                  print("Fixed: net/ipv6/tcp_ipv6.c")
+          except Exception as e:
+              print(f"Skip tcp_ipv6.c: {e}")
           PYEOF
           echo "All fixes applied"
 
@@ -62,36 +73,6 @@ jobs:
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-
-      - name: Fix duplicate static in tcp_ipv6.c
-        run: |
-          echo "=== Before fix (around line 146) ==="
-          head -160 net/ipv6/tcp_ipv6.c | tail -20
-          python3 << 'PYEOF'
-          import re
-          path = 'net/ipv6/tcp_ipv6.c'
-          with open(path, 'r') as f:
-              lines = f.readlines()
-          fixed = False
-          for i, line in enumerate(lines):
-              # Cari semua kata 'static' utuh
-              matches = list(re.finditer(r'\bstatic\b', line))
-              if len(matches) > 1:
-                  # Hapus semua 'static' kecuali yang pertama (dari belakang agar indeks tidak bergeser)
-                  for m in reversed(matches[1:]):
-                      line = line[:m.start()] + line[m.end():]
-                  lines[i] = line
-                  fixed = True
-                  print(f"Fixed line {i+1}: {line.strip()}")
-          if fixed:
-              with open(path, 'w') as f:
-                  f.writelines(lines)
-              print("Duplicate static removed.")
-          else:
-              print("No duplicate static found.")
-          PYEOF
-          echo "=== After fix (around line 146) ==="
-          head -160 net/ipv6/tcp_ipv6.c | tail -20
 
       - name: Build Kernel with Clang
         id: build
@@ -118,14 +99,14 @@ jobs:
           make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
-            2>&1 | tee /tmp/build.log
+            2>&1 | tee /tmp/build.log || true
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out -name "Image.gz" | head -1)
           fi
           if [ -z "$KERNEL" ]; then
-            echo "=== ERROR: Kernel not found. Last 100 lines ==="
-            grep -i "error\|undefined\|ld:" /tmp/build.log | tail -50
+            echo "=== ERROR: Kernel not found. Errors ==="
+            grep -i "error:" /tmp/build.log | grep -v "Wno-error" | tail -30
             exit 2
           fi
           echo "Kernel: $KERNEL"
@@ -159,6 +140,7 @@ jobs:
            second_size, second_addr,
            tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
 
+          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
           name    = boot[48:64]
           cmdline = boot[64:576]
           id_data = boot[576:608]
@@ -217,6 +199,7 @@ jobs:
           write_file('boot-rt2800-d2s.img', output)
           print(f"boot.img written: {len(output)} bytes")
           EOF
+
         env:
           KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
 
