@@ -48,6 +48,12 @@ jobs:
           rm -rf out
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
+          # Merge nethunter config
+          ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/nethunter.config
+          # Fix stackprotector
+          scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
+          scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
+          make O=out olddefconfig
           make O=out -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
