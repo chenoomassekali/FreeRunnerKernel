@@ -16,6 +16,7 @@ jobs:
           sudo apt update
           sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget git clang lld llvm device-tree-compiler
           clang --version
+          ld.lld --version
 
       - name: Download Nethunter boot.img
         run: |
@@ -26,12 +27,14 @@ jobs:
         run: |
           sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
           sed -i 's/HOSTCFLAGS := -Wall -Wstrict-prototypes/HOSTCFLAGS := -Wall -Wno-error/g' scripts/Makefile 2>/dev/null || true
+          # Hapus semua flag polly dan mllvm
           find . \( -name "Makefile" -o -name "Kbuild" \) | xargs sed -i \
             -e 's/-mllvm -polly-vectorizer=stripmine//g' \
             -e 's/-mllvm -polly-invariant-load-hoisting//g' \
             -e 's/-mllvm -polly[^ ]*//g' \
             -e 's/-mllvm//g' \
             -e 's/-fpolly[^ ]*//g' \
+            -e 's/--pack-dyn-relocs=relr//g' \
             2>/dev/null || true
           python3 << 'PYEOF'
           import os, glob, re
@@ -60,23 +63,32 @@ jobs:
           except Exception as e:
               print(f"Skip tcp_ipv6.c: {e}")
           PYEOF
-          # Fix duplicate static di tcp_ipv6.c line 146
-          sed -n '144,148p' net/ipv6/tcp_ipv6.c || true
           sed -i '146s/^static //' net/ipv6/tcp_ipv6.c 2>/dev/null || true
-          sed -n '144,148p' net/ipv6/tcp_ipv6.c || true
           echo "All fixes applied"
 
-      - name: Add RT2800 Config
+      - name: Add RT2800 and Encryption Config
         run: |
-          echo "CONFIG_WLAN_VENDOR_RALINK=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2X00=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2X00USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2800USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2800USB_RT2770=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
+          # RT2800 WiFi
+          echo "CONFIG_WLAN_VENDOR_RALINK=y" >> $DEFCONFIG
+          echo "CONFIG_RT2X00=y" >> $DEFCONFIG
+          echo "CONFIG_RT2X00USB=y" >> $DEFCONFIG
+          echo "CONFIG_RT2800USB=y" >> $DEFCONFIG
+          echo "CONFIG_RT2800USB_RT2770=y" >> $DEFCONFIG
+          echo "CONFIG_RT2800USB_RT3070=y" >> $DEFCONFIG
+          echo "CONFIG_RT2800USB_UNKNOWN=y" >> $DEFCONFIG
+          # Encryption - wajib agar data partition bisa mount
+          echo "CONFIG_BLK_INLINE_ENCRYPTION=y" >> $DEFCONFIG
+          echo "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y" >> $DEFCONFIG
+          echo "CONFIG_EXT4_ENCRYPTION=y" >> $DEFCONFIG
+          echo "CONFIG_EXT4_FS_ENCRYPTION=y" >> $DEFCONFIG
+          echo "CONFIG_F2FS_FS_ENCRYPTION=y" >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION=y" >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION_ALGS=y" >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y" >> $DEFCONFIG
+          # Fix stackprotector
+          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' $DEFCONFIG
+          echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> $DEFCONFIG
 
       - name: Build Kernel with Clang
         id: build
@@ -91,6 +103,7 @@ jobs:
           export OBJCOPY=llvm-objcopy
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
+          export LDFLAGS=""
           export DTC=$(which dtc)
           rm -rf out
           mkdir -p out
@@ -99,13 +112,12 @@ jobs:
           scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           scripts/config --file out/.config --disable CONFIG_POLLY_CLANG 2>/dev/null || true
-          scripts/config --file out/.config --disable CONFIG_RELR
           make O=out olddefconfig
-          make O=out DTC=$DTC -j$(nproc) LD=ld.lld \
+          make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
+            LD=ld.lld \
             2>&1 | tee /tmp/build.log || true
-
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out -name "Image.gz" | head -1)
@@ -115,20 +127,9 @@ jobs:
             grep -i "error:" /tmp/build.log | grep -v "Wno-error" | tail -30
             exit 2
           fi
-          echo "Plain kernel: $KERNEL"
-
-          # ------------- APPEND DTB -------------
-          DTB=$(find out -name "exynos9820-d2s.dtb" | head -1)
-          if [ -n "$DTB" ]; then
-            KERNEL_DTB="out/Image-dtb"
-            cat "$KERNEL" "$DTB" > "$KERNEL_DTB"
-            echo "DTB appended: $KERNEL_DTB"
-            echo "kernel_path=$KERNEL_DTB" >> $GITHUB_OUTPUT
-          else
-            echo "WARNING: No DTB found, using plain kernel (may not boot)"
-            echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
-          fi
-          # -------------------------------------
+          echo "Kernel: $KERNEL"
+          ls -lh "$KERNEL"
+          echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
 
       - name: Unpack and Repack boot.img (Pure Python)
         run: |
