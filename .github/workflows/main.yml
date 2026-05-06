@@ -65,8 +65,33 @@ jobs:
 
       - name: Fix duplicate static in tcp_ipv6.c
         run: |
-          sed -i 's/static static/static/g' net/ipv6/tcp_ipv6.c
-          echo "Fixed duplicate static in net/ipv6/tcp_ipv6.c"
+          echo "=== Before fix (around line 146) ==="
+          head -160 net/ipv6/tcp_ipv6.c | tail -20
+          python3 << 'PYEOF'
+          import re
+          path = 'net/ipv6/tcp_ipv6.c'
+          with open(path, 'r') as f:
+              lines = f.readlines()
+          fixed = False
+          for i, line in enumerate(lines):
+              # Cari semua kata 'static' utuh
+              matches = list(re.finditer(r'\bstatic\b', line))
+              if len(matches) > 1:
+                  # Hapus semua 'static' kecuali yang pertama (dari belakang agar indeks tidak bergeser)
+                  for m in reversed(matches[1:]):
+                      line = line[:m.start()] + line[m.end():]
+                  lines[i] = line
+                  fixed = True
+                  print(f"Fixed line {i+1}: {line.strip()}")
+          if fixed:
+              with open(path, 'w') as f:
+                  f.writelines(lines)
+              print("Duplicate static removed.")
+          else:
+              print("No duplicate static found.")
+          PYEOF
+          echo "=== After fix (around line 146) ==="
+          head -160 net/ipv6/tcp_ipv6.c | tail -20
 
       - name: Build Kernel with Clang
         id: build
