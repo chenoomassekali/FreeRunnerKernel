@@ -63,6 +63,11 @@ jobs:
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
+      - name: Fix duplicate static in tcp_ipv6.c
+        run: |
+          sed -i 's/static static/static/g' net/ipv6/tcp_ipv6.c
+          echo "Fixed duplicate static in net/ipv6/tcp_ipv6.c"
+
       - name: Build Kernel with Clang
         id: build
         run: |
@@ -105,7 +110,7 @@ jobs:
       - name: Unpack and Repack boot.img (Pure Python)
         run: |
           python3 << 'EOF'
-          import struct, os, subprocess
+          import struct, os
 
           def read_file(path):
               with open(path, 'rb') as f:
