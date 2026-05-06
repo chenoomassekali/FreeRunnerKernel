@@ -34,15 +34,13 @@ jobs:
             -e 's/-fpolly[^ ]*//g' \
             2>/dev/null || true
           python3 << 'PYEOF'
-          import os, glob
+          import os, glob, re
           files = glob.glob('include/linux/compiler*.h')
           for fpath in files:
               try:
                   with open(fpath, 'r') as f:
                       content = f.read()
                   original = content
-                  # Replace semua __has_attribute dengan 0
-                  import re
                   content = re.sub(r'__has_attribute\s*\([^)]+\)', '0', content)
                   if content != original:
                       with open(fpath, 'w') as f:
@@ -90,10 +88,15 @@ jobs:
           make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
-            2>&1 || true
+            2>&1 | tee /tmp/build.log
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out -name "Image.gz" | head -1)
+          fi
+          if [ -z "$KERNEL" ]; then
+            echo "=== ERROR: Kernel not found. Last 100 lines ==="
+            grep -i "error\|undefined\|ld:" /tmp/build.log | tail -50
+            exit 2
           fi
           echo "Kernel: $KERNEL"
           ls -lh "$KERNEL"
@@ -102,7 +105,7 @@ jobs:
       - name: Unpack and Repack boot.img (Pure Python)
         run: |
           python3 << 'EOF'
-          import struct, os
+          import struct, os, subprocess
 
           def read_file(path):
               with open(path, 'rb') as f:
@@ -126,7 +129,6 @@ jobs:
            second_size, second_addr,
            tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
 
-          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
           name    = boot[48:64]
           cmdline = boot[64:576]
           id_data = boot[576:608]
@@ -185,7 +187,6 @@ jobs:
           write_file('boot-rt2800-d2s.img', output)
           print(f"boot.img written: {len(output)} bytes")
           EOF
-
         env:
           KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
 
