@@ -22,12 +22,12 @@ jobs:
           wget -q https://github.com/chenoomassekali/android_kernel_Samsung_Exynos9825_d2s/releases/download/v2.0/boot-current.img -O nethunter-boot.img
           ls -lh nethunter-boot.img
 
-      - name: Fix DTC and Polly Flags
+      - name: Fix DTC Polly and Compiler Issues
         run: |
           # Fix Werror di scripts/dtc
           sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
           sed -i 's/HOSTCFLAGS := -Wall -Wstrict-prototypes/HOSTCFLAGS := -Wall -Wno-error/g' scripts/Makefile 2>/dev/null || true
-          # Hapus semua flag polly dan mllvm yang tidak kompatibel
+          # Hapus semua flag polly dan mllvm
           find . \( -name "Makefile" -o -name "Kbuild" \) | xargs sed -i \
             -e 's/-mllvm -polly-vectorizer=stripmine//g' \
             -e 's/-mllvm -polly-invariant-load-hoisting//g' \
@@ -35,7 +35,9 @@ jobs:
             -e 's/-mllvm//g' \
             -e 's/-fpolly[^ ]*//g' \
             2>/dev/null || true
-          echo "Polly flags removed"
+          # Fix __has_attribute error
+          sed -i 's/#if __has_attribute(__fallthrough__)/#if defined(__clang__) \&\& __has_attribute(__fallthrough__)/g' include/linux/compiler_types.h 2>/dev/null || true
+          echo "All fixes applied"
 
       - name: Add RT2800 Config
         run: |
