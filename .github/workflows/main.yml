@@ -60,6 +60,10 @@ jobs:
           except Exception as e:
               print(f"Skip tcp_ipv6.c: {e}")
           PYEOF
+          # Fix duplicate static di tcp_ipv6.c line 146
+          sed -n '144,148p' net/ipv6/tcp_ipv6.c || true
+          sed -i '146s/^static //' net/ipv6/tcp_ipv6.c 2>/dev/null || true
+          sed -n '144,148p' net/ipv6/tcp_ipv6.c || true
           echo "All fixes applied"
 
       - name: Add RT2800 Config
