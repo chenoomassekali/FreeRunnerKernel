@@ -22,7 +22,7 @@ jobs:
           wget -q https://github.com/chenoomassekali/android_kernel_Samsung_Exynos9825_d2s/releases/download/v2.0/boot-current.img -O nethunter-boot.img
           ls -lh nethunter-boot.img
 
-      - name: Fix DTC Polly and Compiler Issues
+      - name: Fix All Build Issues
         run: |
           # Fix Werror di scripts/dtc
           sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
@@ -35,8 +35,25 @@ jobs:
             -e 's/-mllvm//g' \
             -e 's/-fpolly[^ ]*//g' \
             2>/dev/null || true
-          # Fix __has_attribute error
-          sed -i 's/#if __has_attribute(__fallthrough__)/#if defined(__clang__) \&\& __has_attribute(__fallthrough__)/g' include/linux/compiler_types.h 2>/dev/null || true
+          # Fix __has_attribute di compiler_types.h
+          python3 << 'PYEOF'
+          try:
+              with open('include/linux/compiler_types.h', 'r') as f:
+                  content = f.read()
+              content = content.replace(
+                  '#if defined(__clang__) && __has_attribute(__fallthrough__)',
+                  '#if defined(__clang__) && defined(__has_attribute) && __has_attribute(__fallthrough__)'
+              )
+              content = content.replace(
+                  '#if __has_attribute(__fallthrough__)',
+                  '#if defined(__has_attribute) && __has_attribute(__fallthrough__)'
+              )
+              with open('include/linux/compiler_types.h', 'w') as f:
+                  f.write(content)
+              print("compiler_types.h fixed")
+          except Exception as e:
+              print(f"Warning: {e}")
+          PYEOF
           echo "All fixes applied"
 
       - name: Add RT2800 Config
