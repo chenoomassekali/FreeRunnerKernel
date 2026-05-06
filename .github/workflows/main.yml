@@ -11,10 +11,16 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Dependencies
+      - name: Install Dependencies and Toolchain
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget
+          sudo apt install -y build-essential bc flex bison libssl-dev libelf-dev python3 wget git
+          # Download ZyC Clang 23 yang dipakai FreeRunnerKernel
+          mkdir -p $HOME/toolchain
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20240701-release/Clang-23.0.0git-20240701.tar.gz -O clang.tar.gz
+          tar -xf clang.tar.gz -C $HOME/toolchain
+          ls $HOME/toolchain/bin/clang || echo "Clang not found, checking structure..."
+          ls $HOME/toolchain/
 
       - name: Download Nethunter boot.img
         run: |
@@ -30,16 +36,22 @@ jobs:
           echo "CONFIG_RT2800USB_RT2770=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Build Kernel with GCC
+      - name: Build Kernel with ZyC Clang
         id: build
         run: |
+          export PATH="$HOME/toolchain/bin:$PATH"
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export ANDROID_MAJOR_VERSION=q
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CC=clang
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export STRIP=llvm-strip
+          clang --version
           rm -rf out
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
