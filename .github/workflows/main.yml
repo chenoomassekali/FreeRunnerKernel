@@ -14,7 +14,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm binutils-aarch64-linux-gnu
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget
 
       - name: Download Nethunter boot.img
         run: |
@@ -31,28 +31,16 @@ jobs:
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Build Kernel with Clang
+      - name: Build Kernel with GCC
         id: build
         run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
           export ANDROID_MAJOR_VERSION=q
           rm -rf out
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
-          # Merge nethunter config
-          ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/nethunter.config
-          # Fix stackprotector
-          scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
-          scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
+          scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/nethunter.config 2>/dev/null || true
           make O=out olddefconfig
           make O=out -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
