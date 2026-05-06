@@ -105,6 +105,7 @@ jobs:
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
             2>&1 | tee /tmp/build.log || true
+
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out -name "Image.gz" | head -1)
@@ -114,9 +115,20 @@ jobs:
             grep -i "error:" /tmp/build.log | grep -v "Wno-error" | tail -30
             exit 2
           fi
-          echo "Kernel: $KERNEL"
-          ls -lh "$KERNEL"
-          echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
+          echo "Plain kernel: $KERNEL"
+
+          # ------------- APPEND DTB -------------
+          DTB=$(find out -name "exynos9820-d2s.dtb" | head -1)
+          if [ -n "$DTB" ]; then
+            KERNEL_DTB="out/Image-dtb"
+            cat "$KERNEL" "$DTB" > "$KERNEL_DTB"
+            echo "DTB appended: $KERNEL_DTB"
+            echo "kernel_path=$KERNEL_DTB" >> $GITHUB_OUTPUT
+          else
+            echo "WARNING: No DTB found, using plain kernel (may not boot)"
+            echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
+          fi
+          # -------------------------------------
 
       - name: Unpack and Repack boot.img (Pure Python)
         run: |
