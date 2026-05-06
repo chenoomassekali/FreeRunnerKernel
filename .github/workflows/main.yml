@@ -14,13 +14,18 @@ jobs:
       - name: Install Dependencies and Toolchain
         run: |
           sudo apt update
-          sudo apt install -y build-essential bc flex bison libssl-dev libelf-dev python3 wget git
-          # Download ZyC Clang 23 yang dipakai FreeRunnerKernel
+          sudo apt install -y build-essential bc flex bison libssl-dev libelf-dev python3 wget git clang lld llvm
+          # Coba download ZyC Clang 23
           mkdir -p $HOME/toolchain
-          wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20240701-release/Clang-23.0.0git-20240701.tar.gz -O clang.tar.gz
-          tar -xf clang.tar.gz -C $HOME/toolchain
-          ls $HOME/toolchain/bin/clang || echo "Clang not found, checking structure..."
-          ls $HOME/toolchain/
+          ZYC_URL="https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20240701-release/Clang-23.0.0git-20240701.tar.gz"
+          wget -q "$ZYC_URL" -O clang.tar.gz && \
+          tar -xf clang.tar.gz -C $HOME/toolchain && \
+          echo "ZyC Clang installed" || echo "Using system clang"
+          # Cek clang yang tersedia
+          if [ -f "$HOME/toolchain/bin/clang" ]; then
+            export PATH="$HOME/toolchain/bin:$PATH"
+          fi
+          clang --version
 
       - name: Download Nethunter boot.img
         run: |
@@ -37,10 +42,13 @@ jobs:
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Build Kernel with ZyC Clang
+      - name: Build Kernel with Clang
         id: build
         run: |
-          export PATH="$HOME/toolchain/bin:$PATH"
+          # Pakai ZyC Clang kalau tersedia, fallback ke system clang
+          if [ -f "$HOME/toolchain/bin/clang" ]; then
+            export PATH="$HOME/toolchain/bin:$PATH"
+          fi
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CLANG_TRIPLE=aarch64-linux-gnu-
