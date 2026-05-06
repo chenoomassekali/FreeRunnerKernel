@@ -24,10 +24,8 @@ jobs:
 
       - name: Fix All Build Issues
         run: |
-          # Fix Werror di scripts/dtc
           sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
           sed -i 's/HOSTCFLAGS := -Wall -Wstrict-prototypes/HOSTCFLAGS := -Wall -Wno-error/g' scripts/Makefile 2>/dev/null || true
-          # Hapus semua flag polly dan mllvm
           find . \( -name "Makefile" -o -name "Kbuild" \) | xargs sed -i \
             -e 's/-mllvm -polly-vectorizer=stripmine//g' \
             -e 's/-mllvm -polly-invariant-load-hoisting//g' \
@@ -35,24 +33,23 @@ jobs:
             -e 's/-mllvm//g' \
             -e 's/-fpolly[^ ]*//g' \
             2>/dev/null || true
-          # Fix __has_attribute di compiler_types.h
           python3 << 'PYEOF'
-          try:
-              with open('include/linux/compiler_types.h', 'r') as f:
-                  content = f.read()
-              content = content.replace(
-                  '#if defined(__clang__) && __has_attribute(__fallthrough__)',
-                  '#if defined(__clang__) && defined(__has_attribute) && __has_attribute(__fallthrough__)'
-              )
-              content = content.replace(
-                  '#if __has_attribute(__fallthrough__)',
-                  '#if defined(__has_attribute) && __has_attribute(__fallthrough__)'
-              )
-              with open('include/linux/compiler_types.h', 'w') as f:
-                  f.write(content)
-              print("compiler_types.h fixed")
-          except Exception as e:
-              print(f"Warning: {e}")
+          import os, glob
+          files = glob.glob('include/linux/compiler*.h')
+          for fpath in files:
+              try:
+                  with open(fpath, 'r') as f:
+                      content = f.read()
+                  original = content
+                  # Replace semua __has_attribute dengan 0
+                  import re
+                  content = re.sub(r'__has_attribute\s*\([^)]+\)', '0', content)
+                  if content != original:
+                      with open(fpath, 'w') as f:
+                          f.write(content)
+                      print(f"Fixed: {fpath}")
+              except Exception as e:
+                  print(f"Skip {fpath}: {e}")
           PYEOF
           echo "All fixes applied"
 
