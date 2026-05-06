@@ -99,8 +99,9 @@ jobs:
           scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           scripts/config --file out/.config --disable CONFIG_POLLY_CLANG 2>/dev/null || true
+          scripts/config --file out/.config --disable CONFIG_RELR
           make O=out olddefconfig
-          make O=out DTC=$DTC -j$(nproc) \
+          make O=out DTC=$DTC -j$(nproc) LD=ld.lld \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
             2>&1 | tee /tmp/build.log || true
