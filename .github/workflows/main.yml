@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build Kernel RT2770
 
 on:
   workflow_dispatch:
@@ -66,29 +66,44 @@ jobs:
           sed -i '146s/^static //' net/ipv6/tcp_ipv6.c 2>/dev/null || true
           echo "All fixes applied"
 
-      - name: Add RT2800 and Encryption Config
+      - name: Add RT2770 and Encryption Config
         run: |
           DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
-          # RT2800 WiFi
-          echo "CONFIG_WLAN_VENDOR_RALINK=y" >> $DEFCONFIG
-          echo "CONFIG_RT2X00=y" >> $DEFCONFIG
-          echo "CONFIG_RT2X00USB=y" >> $DEFCONFIG
-          echo "CONFIG_RT2800USB=y" >> $DEFCONFIG
-          echo "CONFIG_RT2800USB_RT2770=y" >> $DEFCONFIG
-          echo "CONFIG_RT2800USB_RT3070=y" >> $DEFCONFIG
-          echo "CONFIG_RT2800USB_UNKNOWN=y" >> $DEFCONFIG
+
+          # =====================
+          # RT2770 WiFi (fokus utama)
+          # =====================
+          echo "CONFIG_WLAN_VENDOR_RALINK=y"        >> $DEFCONFIG
+          echo "CONFIG_RT2X00=y"                    >> $DEFCONFIG
+          echo "CONFIG_RT2X00USB=y"                 >> $DEFCONFIG
+          echo "CONFIG_RT2X00LIB=y"                 >> $DEFCONFIG
+          echo "CONFIG_RT2X00LIB_USB=y"             >> $DEFCONFIG
+          echo "CONFIG_RT2800USB=y"                 >> $DEFCONFIG
+          echo "CONFIG_RT2800USB_RT2770=y"          >> $DEFCONFIG   # <-- TARGET UTAMA RT2770
+          echo "CONFIG_RT2800LIB=y"                 >> $DEFCONFIG
+          echo "CONFIG_RT2800USB_UNKNOWN=y"         >> $DEFCONFIG   # fallback chipset tak dikenal
+
+          # Chipset lain dalam keluarga RT28xx (opsional, bisa dihapus jika tidak perlu)
+          # echo "CONFIG_RT2800USB_RT3070=y"        >> $DEFCONFIG
+          # echo "CONFIG_RT2800USB_RT3573=y"        >> $DEFCONFIG
+          # echo "CONFIG_RT2800USB_RT53XX=y"        >> $DEFCONFIG
+          # echo "CONFIG_RT2800USB_RT55XX=y"        >> $DEFCONFIG
+
+          # =====================
           # Encryption - wajib agar data partition bisa mount
-          echo "CONFIG_BLK_INLINE_ENCRYPTION=y" >> $DEFCONFIG
+          # =====================
+          echo "CONFIG_BLK_INLINE_ENCRYPTION=y"          >> $DEFCONFIG
           echo "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y" >> $DEFCONFIG
-          echo "CONFIG_EXT4_ENCRYPTION=y" >> $DEFCONFIG
-          echo "CONFIG_EXT4_FS_ENCRYPTION=y" >> $DEFCONFIG
-          echo "CONFIG_F2FS_FS_ENCRYPTION=y" >> $DEFCONFIG
-          echo "CONFIG_FS_ENCRYPTION=y" >> $DEFCONFIG
-          echo "CONFIG_FS_ENCRYPTION_ALGS=y" >> $DEFCONFIG
-          echo "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y" >> $DEFCONFIG
+          echo "CONFIG_EXT4_ENCRYPTION=y"                >> $DEFCONFIG
+          echo "CONFIG_EXT4_FS_ENCRYPTION=y"             >> $DEFCONFIG
+          echo "CONFIG_F2FS_FS_ENCRYPTION=y"             >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION=y"                  >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION_ALGS=y"             >> $DEFCONFIG
+          echo "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y"     >> $DEFCONFIG
+
           # Fix stackprotector
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' $DEFCONFIG
-          echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> $DEFCONFIG
+          echo "CONFIG_CC_STACKPROTECTOR_NONE=y"         >> $DEFCONFIG
 
       - name: Build Kernel with Clang
         id: build
@@ -214,7 +229,8 @@ jobs:
           if second_data:
               output += align(second_data, page_size)
 
-          write_file('boot-rt2800-d2s.img', output)
+          # Output diberi nama sesuai chipset RT2770
+          write_file('boot-rt2770-d2s.img', output)
           print(f"boot.img written: {len(output)} bytes")
           EOF
 
@@ -223,10 +239,10 @@ jobs:
 
       - name: Verify boot.img
         run: |
-          ls -lh boot-rt2800-d2s.img
+          ls -lh boot-rt2770-d2s.img
           python3 -c "
           import struct
-          with open('boot-rt2800-d2s.img','rb') as f: h=f.read(64)
+          with open('boot-rt2770-d2s.img','rb') as f: h=f.read(64)
           assert h[:8]==b'ANDROID!', 'Bad magic!'
           ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
           print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
@@ -236,5 +252,6 @@ jobs:
       - name: Upload boot.img
         uses: actions/upload-artifact@v4
         with:
-          name: boot-rt2800-d2s
-          path: boot-rt2800-d2s.img
+          name: boot-rt2770-d2s
+          path: boot-rt2770-d2s.img
+
