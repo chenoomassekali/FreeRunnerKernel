@@ -1,4 +1,4 @@
-name: Build Kernel RT2770 v2
+name: Build Kernel RT2770 v3
 
 on:
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
         run: |
           DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
 
-          # Encryption - wajib agar data partition bisa mount
+          # Encryption
           echo "CONFIG_BLK_INLINE_ENCRYPTION=y"          >> $DEFCONFIG
           echo "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y" >> $DEFCONFIG
           echo "CONFIG_EXT4_ENCRYPTION=y"                >> $DEFCONFIG
@@ -102,16 +102,32 @@ jobs:
           # Step 1: Load defconfig
           make O=out exynos9820-d2s_defconfig
 
-          # Step 2: Merge nethunter config
-          scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/nethunter.config 2>/dev/null || true
+          # Step 2: Hapus semua baris RT2X00/Ralink dari nethunter.config
+          # supaya tidak menimpa config RT2770 kita
+          echo "=== Membersihkan nethunter.config dari konflik RT2X00 ==="
+          NHCONFIG=arch/arm64/configs/nethunter.config
+          if [ -f "$NHCONFIG" ]; then
+            sed -i '/CONFIG_RT2X00/d'             $NHCONFIG
+            sed -i '/CONFIG_RT2800/d'             $NHCONFIG
+            sed -i '/CONFIG_RT2X00LIB/d'          $NHCONFIG
+            sed -i '/CONFIG_RT2800LIB/d'          $NHCONFIG
+            sed -i '/CONFIG_WLAN_VENDOR_RALINK/d' $NHCONFIG
+            echo "✅ nethunter.config dibersihkan"
+            grep -i "rt2\|ralink" $NHCONFIG || echo "✅ Tidak ada sisa RT2/Ralink di nethunter.config"
+          else
+            echo "⚠️ nethunter.config tidak ditemukan, skip"
+          fi
 
-          # Step 3: Fix stackprotector
+          # Step 3: Merge nethunter config (sudah bersih)
+          scripts/kconfig/merge_config.sh -m -O out out/.config $NHCONFIG 2>/dev/null || true
+
+          # Step 4: Fix stackprotector & polly
           scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           scripts/config --file out/.config --disable CONFIG_POLLY_CLANG 2>/dev/null || true
 
-          # Step 4: PAKSA RT2770 SETELAH merge (supaya tidak tertimpa)
-          echo "=== Forcing RT2770 configs ==="
+          # Step 5: PAKSA RT2770 masuk ke .config
+          echo "=== Memaksa RT2770 configs ==="
           scripts/config --file out/.config --enable CONFIG_WLAN_VENDOR_RALINK
           scripts/config --file out/.config --enable CONFIG_RT2X00
           scripts/config --file out/.config --enable CONFIG_RT2X00LIB
@@ -122,21 +138,30 @@ jobs:
           scripts/config --file out/.config --enable CONFIG_RT2800USB_RT2770
           scripts/config --file out/.config --enable CONFIG_RT2800USB_UNKNOWN
 
-          # Step 5: Resolve semua dependency dari config baru
+          # Step 6: Resolve dependencies
           make O=out olddefconfig
 
-          # Step 6: Verifikasi RT2770 benar-benar masuk
-          echo "=== Verifikasi RT2770 di .config ==="
-          grep -i "RT2X00\|RT2800\|RT2770\|RALINK" out/.config || echo "WARNING: RT2770 tidak ditemukan!"
+          # Step 7: Verifikasi FINAL RT2770 di .config
+          echo "=== VERIFIKASI FINAL RT2770 ==="
+          grep -E "RT2X00|RT2800|RT2770|RALINK" out/.config
+          echo "=========================="
 
-          # Step 7: Build
+          # Pastikan RT2770 benar-benar ada
+          if grep -q "CONFIG_RT2800USB_RT2770=y" out/.config; then
+            echo "✅ RT2770 BERHASIL MASUK ke kernel!"
+          else
+            echo "❌ RT2770 GAGAL masuk! Cek log di atas."
+            exit 1
+          fi
+
+          # Step 8: Build kernel
           make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
             LD=ld.lld \
             2>&1 | tee /tmp/build.log || true
 
-          # Step 8: Cek hasil build
+          # Step 9: Cek hasil build
           KERNEL=$(find out/arch/arm64/boot -name "Image" ! -name "*.gz" 2>/dev/null | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out/arch/arm64/boot -name "Image.gz" 2>/dev/null | head -1)
