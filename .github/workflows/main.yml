@@ -1,4 +1,4 @@
-name: Build Kernel RT2770
+name: Build Kernel RT2770 v2
 
 on:
   workflow_dispatch:
@@ -27,7 +27,6 @@ jobs:
         run: |
           sed -i 's/-Werror//g' scripts/dtc/Makefile 2>/dev/null || true
           sed -i 's/HOSTCFLAGS := -Wall -Wstrict-prototypes/HOSTCFLAGS := -Wall -Wno-error/g' scripts/Makefile 2>/dev/null || true
-          # Hapus semua flag polly dan mllvm
           find . \( -name "Makefile" -o -name "Kbuild" \) | xargs sed -i \
             -e 's/-mllvm -polly-vectorizer=stripmine//g' \
             -e 's/-mllvm -polly-invariant-load-hoisting//g' \
@@ -38,7 +37,6 @@ jobs:
             2>/dev/null || true
           python3 << 'PYEOF'
           import os, glob, re
-          # Fix __has_attribute
           for fpath in glob.glob('include/linux/compiler*.h'):
               try:
                   with open(fpath, 'r') as f:
@@ -51,7 +49,6 @@ jobs:
                       print(f"Fixed: {fpath}")
               except Exception as e:
                   print(f"Skip {fpath}: {e}")
-          # Fix duplicate static di tcp_ipv6.c
           try:
               with open('net/ipv6/tcp_ipv6.c', 'r') as f:
                   content = f.read()
@@ -66,32 +63,11 @@ jobs:
           sed -i '146s/^static //' net/ipv6/tcp_ipv6.c 2>/dev/null || true
           echo "All fixes applied"
 
-      - name: Add RT2770 and Encryption Config
+      - name: Add Base Config (defconfig)
         run: |
           DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
 
-          # =====================
-          # RT2770 WiFi (fokus utama)
-          # =====================
-          echo "CONFIG_WLAN_VENDOR_RALINK=y"        >> $DEFCONFIG
-          echo "CONFIG_RT2X00=y"                    >> $DEFCONFIG
-          echo "CONFIG_RT2X00USB=y"                 >> $DEFCONFIG
-          echo "CONFIG_RT2X00LIB=y"                 >> $DEFCONFIG
-          echo "CONFIG_RT2X00LIB_USB=y"             >> $DEFCONFIG
-          echo "CONFIG_RT2800USB=y"                 >> $DEFCONFIG
-          echo "CONFIG_RT2800USB_RT2770=y"          >> $DEFCONFIG   # <-- TARGET UTAMA RT2770
-          echo "CONFIG_RT2800LIB=y"                 >> $DEFCONFIG
-          echo "CONFIG_RT2800USB_UNKNOWN=y"         >> $DEFCONFIG   # fallback chipset tak dikenal
-
-          # Chipset lain dalam keluarga RT28xx (opsional, bisa dihapus jika tidak perlu)
-          # echo "CONFIG_RT2800USB_RT3070=y"        >> $DEFCONFIG
-          # echo "CONFIG_RT2800USB_RT3573=y"        >> $DEFCONFIG
-          # echo "CONFIG_RT2800USB_RT53XX=y"        >> $DEFCONFIG
-          # echo "CONFIG_RT2800USB_RT55XX=y"        >> $DEFCONFIG
-
-          # =====================
           # Encryption - wajib agar data partition bisa mount
-          # =====================
           echo "CONFIG_BLK_INLINE_ENCRYPTION=y"          >> $DEFCONFIG
           echo "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y" >> $DEFCONFIG
           echo "CONFIG_EXT4_ENCRYPTION=y"                >> $DEFCONFIG
@@ -122,27 +98,55 @@ jobs:
           export DTC=$(which dtc)
           rm -rf out
           mkdir -p out
+
+          # Step 1: Load defconfig
           make O=out exynos9820-d2s_defconfig
+
+          # Step 2: Merge nethunter config
           scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/nethunter.config 2>/dev/null || true
+
+          # Step 3: Fix stackprotector
           scripts/config --file out/.config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           scripts/config --file out/.config --disable CONFIG_POLLY_CLANG 2>/dev/null || true
+
+          # Step 4: PAKSA RT2770 SETELAH merge (supaya tidak tertimpa)
+          echo "=== Forcing RT2770 configs ==="
+          scripts/config --file out/.config --enable CONFIG_WLAN_VENDOR_RALINK
+          scripts/config --file out/.config --enable CONFIG_RT2X00
+          scripts/config --file out/.config --enable CONFIG_RT2X00LIB
+          scripts/config --file out/.config --enable CONFIG_RT2X00USB
+          scripts/config --file out/.config --enable CONFIG_RT2X00LIB_USB
+          scripts/config --file out/.config --enable CONFIG_RT2800LIB
+          scripts/config --file out/.config --enable CONFIG_RT2800USB
+          scripts/config --file out/.config --enable CONFIG_RT2800USB_RT2770
+          scripts/config --file out/.config --enable CONFIG_RT2800USB_UNKNOWN
+
+          # Step 5: Resolve semua dependency dari config baru
           make O=out olddefconfig
+
+          # Step 6: Verifikasi RT2770 benar-benar masuk
+          echo "=== Verifikasi RT2770 di .config ==="
+          grep -i "RT2X00\|RT2800\|RT2770\|RALINK" out/.config || echo "WARNING: RT2770 tidak ditemukan!"
+
+          # Step 7: Build
           make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
             LD=ld.lld \
             2>&1 | tee /tmp/build.log || true
-          KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
+
+          # Step 8: Cek hasil build
+          KERNEL=$(find out/arch/arm64/boot -name "Image" ! -name "*.gz" 2>/dev/null | head -1)
           if [ -z "$KERNEL" ]; then
-            KERNEL=$(find out -name "Image.gz" | head -1)
+            KERNEL=$(find out/arch/arm64/boot -name "Image.gz" 2>/dev/null | head -1)
           fi
-          if [ -z "$KERNEL" ]; then
-            echo "=== ERROR: Kernel not found. Errors ==="
-            grep -i "error:" /tmp/build.log | grep -v "Wno-error" | tail -30
-            exit 2
+          if [ -z "$KERNEL" ] || [ ! -f "$KERNEL" ]; then
+            echo "=== ERROR: Kernel Image tidak ditemukan! ==="
+            grep -i "error:" /tmp/build.log | grep -v "Wno-error" | tail -50
+            exit 1
           fi
-          echo "Kernel: $KERNEL"
+          echo "✅ Kernel ditemukan: $KERNEL"
           ls -lh "$KERNEL"
           echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
 
@@ -229,9 +233,8 @@ jobs:
           if second_data:
               output += align(second_data, page_size)
 
-          # Output diberi nama sesuai chipset RT2770
           write_file('boot-rt2770-d2s.img', output)
-          print(f"boot.img written: {len(output)} bytes")
+          print(f"✅ boot.img written: {len(output)} bytes")
           EOF
 
         env:
@@ -246,7 +249,7 @@ jobs:
           assert h[:8]==b'ANDROID!', 'Bad magic!'
           ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
           print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
-          print('boot.img looks valid!')
+          print('✅ boot.img valid!')
           "
 
       - name: Upload boot.img
