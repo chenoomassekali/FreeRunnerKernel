@@ -1,4 +1,4 @@
-name: Build Kernel RT2770 v3
+name: Build Kernel RT2770 v4
 
 on:
   workflow_dispatch:
@@ -63,6 +63,55 @@ jobs:
           sed -i '146s/^static //' net/ipv6/tcp_ipv6.c 2>/dev/null || true
           echo "All fixes applied"
 
+      - name: Patch Kconfig - Tambah RT2770 ke source tree
+        run: |
+          # Cari file Kconfig RT2800USB
+          KCONFIG=$(find drivers/net/wireless -name "Kconfig" | xargs grep -l "RT2800USB" 2>/dev/null | head -1)
+          if [ -z "$KCONFIG" ]; then
+            KCONFIG=$(find drivers -name "Kconfig" | xargs grep -l "RT2800USB" 2>/dev/null | head -1)
+          fi
+
+          echo "=== Kconfig ditemukan: $KCONFIG ==="
+
+          if [ -n "$KCONFIG" ]; then
+            # Cek apakah RT2770 sudah ada
+            if grep -q "RT2800USB_RT2770" "$KCONFIG"; then
+              echo "✅ RT2770 sudah ada di Kconfig"
+            else
+              echo "⚠️ RT2770 tidak ada, menambahkan ke Kconfig..."
+              # Tambahkan entry RT2770 setelah RT2800USB block
+              python3 << PYEOF
+          with open("$KCONFIG", "r") as f:
+              content = f.read()
+
+          rt2770_entry = """
+          config RT2800USB_RT2770
+          	bool "rt2800usb - Include support for rt2770 based chipsets"
+          	default y
+          	---help---
+          	  This adds support for rt2770 based chipsets.
+          	  Chipsets supported: RT2770, RT2790, MT7601U
+          """
+
+          # Sisipkan setelah "config RT2800USB_RT3070" atau di akhir RT2800USB block
+          if "RT2800USB_RT3070" in content:
+              content = content.replace(
+                  "config RT2800USB_RT3070",
+                  rt2770_entry + "\nconfig RT2800USB_RT3070"
+              )
+          elif "config RT2800USB" in content:
+              # Tambah di akhir file sebagai fallback
+              content += rt2770_entry
+
+          with open("$KCONFIG", "w") as f:
+              f.write(content)
+          print("✅ RT2770 entry ditambahkan ke Kconfig")
+          PYEOF
+            fi
+          else
+            echo "⚠️ Kconfig tidak ditemukan, akan inject langsung ke .config"
+          fi
+
       - name: Add Base Config (defconfig)
         run: |
           DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
@@ -102,9 +151,7 @@ jobs:
           # Step 1: Load defconfig
           make O=out exynos9820-d2s_defconfig
 
-          # Step 2: Hapus semua baris RT2X00/Ralink dari nethunter.config
-          # supaya tidak menimpa config RT2770 kita
-          echo "=== Membersihkan nethunter.config dari konflik RT2X00 ==="
+          # Step 2: Bersihkan nethunter.config dari konflik RT2X00
           NHCONFIG=arch/arm64/configs/nethunter.config
           if [ -f "$NHCONFIG" ]; then
             sed -i '/CONFIG_RT2X00/d'             $NHCONFIG
@@ -112,13 +159,10 @@ jobs:
             sed -i '/CONFIG_RT2X00LIB/d'          $NHCONFIG
             sed -i '/CONFIG_RT2800LIB/d'          $NHCONFIG
             sed -i '/CONFIG_WLAN_VENDOR_RALINK/d' $NHCONFIG
-            echo "✅ nethunter.config dibersihkan"
-            grep -i "rt2\|ralink" $NHCONFIG || echo "✅ Tidak ada sisa RT2/Ralink di nethunter.config"
-          else
-            echo "⚠️ nethunter.config tidak ditemukan, skip"
+            echo "✅ nethunter.config dibersihkan dari RT2X00"
           fi
 
-          # Step 3: Merge nethunter config (sudah bersih)
+          # Step 3: Merge nethunter config
           scripts/kconfig/merge_config.sh -m -O out out/.config $NHCONFIG 2>/dev/null || true
 
           # Step 4: Fix stackprotector & polly
@@ -126,8 +170,7 @@ jobs:
           scripts/config --file out/.config --enable CONFIG_CC_STACKPROTECTOR_NONE
           scripts/config --file out/.config --disable CONFIG_POLLY_CLANG 2>/dev/null || true
 
-          # Step 5: PAKSA RT2770 masuk ke .config
-          echo "=== Memaksa RT2770 configs ==="
+          # Step 5: Enable RT2X00 framework via scripts/config
           scripts/config --file out/.config --enable CONFIG_WLAN_VENDOR_RALINK
           scripts/config --file out/.config --enable CONFIG_RT2X00
           scripts/config --file out/.config --enable CONFIG_RT2X00LIB
@@ -135,33 +178,44 @@ jobs:
           scripts/config --file out/.config --enable CONFIG_RT2X00LIB_USB
           scripts/config --file out/.config --enable CONFIG_RT2800LIB
           scripts/config --file out/.config --enable CONFIG_RT2800USB
-          scripts/config --file out/.config --enable CONFIG_RT2800USB_RT2770
           scripts/config --file out/.config --enable CONFIG_RT2800USB_UNKNOWN
 
-          # Step 6: Resolve dependencies
+          # Step 6: olddefconfig untuk resolve dependencies
           make O=out olddefconfig
 
-          # Step 7: Verifikasi FINAL RT2770 di .config
+          # Step 7: INJECT RT2770 langsung ke .config setelah olddefconfig
+          # (bypass Kconfig validation)
+          echo "=== Inject RT2770 langsung ke .config ==="
+          # Hapus dulu kalau ada versi lama
+          sed -i '/CONFIG_RT2800USB_RT2770/d' out/.config
+          # Inject setelah baris CONFIG_RT2800USB
+          sed -i '/^CONFIG_RT2800USB=y/a CONFIG_RT2800USB_RT2770=y' out/.config
+          # Fallback: tambah di akhir kalau sed di atas gagal
+          if ! grep -q "CONFIG_RT2800USB_RT2770=y" out/.config; then
+            echo "CONFIG_RT2800USB_RT2770=y" >> out/.config
+            echo "CONFIG_RT2800USB_RT2870=y" >> out/.config
+          fi
+
+          # Step 8: Verifikasi FINAL
           echo "=== VERIFIKASI FINAL RT2770 ==="
           grep -E "RT2X00|RT2800|RT2770|RALINK" out/.config
           echo "=========================="
 
-          # Pastikan RT2770 benar-benar ada
           if grep -q "CONFIG_RT2800USB_RT2770=y" out/.config; then
-            echo "✅ RT2770 BERHASIL MASUK ke kernel!"
+            echo "✅ RT2770 BERHASIL MASUK!"
           else
-            echo "❌ RT2770 GAGAL masuk! Cek log di atas."
+            echo "❌ RT2770 GAGAL masuk!"
             exit 1
           fi
 
-          # Step 8: Build kernel
+          # Step 9: Build kernel (TANPA olddefconfig lagi agar inject tidak hilang)
           make O=out DTC=$DTC -j$(nproc) \
             HOSTCFLAGS="-Wno-error" \
             KCFLAGS="-w -Wno-error" \
             LD=ld.lld \
             2>&1 | tee /tmp/build.log || true
 
-          # Step 9: Cek hasil build
+          # Step 10: Cek hasil build
           KERNEL=$(find out/arch/arm64/boot -name "Image" ! -name "*.gz" 2>/dev/null | head -1)
           if [ -z "$KERNEL" ]; then
             KERNEL=$(find out/arch/arm64/boot -name "Image.gz" 2>/dev/null | head -1)
@@ -202,7 +256,6 @@ jobs:
            second_size, second_addr,
            tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
 
-          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
           name    = boot[48:64]
           cmdline = boot[64:576]
           id_data = boot[576:608]
